@@ -1,0 +1,57 @@
+IGNITION - modern Windows compatibility layer
+=============================================
+
+Runs the 1997 game on Windows 10/11. The game executable is NOT modified.
+
+
+INSTALL
+-------
+1. Copy  ddraw.dll  and  ign_compat.ini  into your Ignition folder,
+   next to Ign_win.exe.
+2. Run Ign_win.exe as normal.
+
+That is the whole install. Windows loads our ddraw.dll instead of the
+system one because a program's own folder is searched first.
+
+
+OPTIONAL
+--------
+dplayx.dll  - only needed if the game refuses to start at all with an
+              error about a missing DLL. DirectPlay is an optional
+              Windows feature; on machines without it the game cannot
+              load. This stub satisfies that and disables LAN play.
+              If the game already starts, you do not need this file.
+
+
+IF FULLSCREEN IS STUCK SMALL
+----------------------------
+Windows may have a "640x480" compatibility shim set for the game, which
+makes it believe your monitor is 640x480. Right-click Ign_win.exe ->
+Properties -> Compatibility -> untick "Run in 640 x 480 screen
+resolution". Leaving "Reduced color mode" and Win95 mode off is fine too.
+
+
+SETTINGS  (ign_compat.ini)
+--------------------------
+WINDOWED       0 = borderless fullscreen, 1 = window
+WINDOW_SCALE   window size multiplier when WINDOWED=1
+SCALING        aspect | integer | stretch
+FILTER         sharp | point | linear
+VSYNC          0 / 1
+CPU_FIX        1 = stop the game pinning a CPU core (recommended)
+BLOCK_JOYSTICK 1 = required, the old joystick API crashes on Win10/11
+BLOCK_MCI      1 = disables CD music (the game works fine without it)
+TRACE          1 = write ign_compat.log for troubleshooting (slow)
+
+
+UNINSTALL
+---------
+Delete ddraw.dll and ign_compat.ini. The game reverts to stock.
+
+
+NOTES
+-----
+* The game has no CD copy protection and runs with no disc. The only
+  thing a disc provided was music.
+* The menus are hardcoded to 640x480 whatever resolution you pick in
+  the game, so menu art is always upscaled. Gameplay uses your setting.

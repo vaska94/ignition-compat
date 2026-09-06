@@ -1,0 +1,4 @@
+LIBRARY dplayx.dll
+EXPORTS
+    DirectPlayCreate      @1
+    DirectPlayEnumerate   @2

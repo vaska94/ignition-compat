@@ -1,0 +1,10 @@
+LIBRARY ddraw.dll
+EXPORTS
+    DirectDrawCreate
+    DirectDrawCreateEx
+    DirectDrawEnumerateA
+    DirectDrawEnumerateW
+    DirectDrawEnumerateExA
+    DirectDrawEnumerateExW
+    DllCanUnloadNow
+    DllGetClassObject
