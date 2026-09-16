@@ -57,6 +57,15 @@ void    present_set_palette(const uint32_t *bgrx256);
  * bytes.  Returns S_OK on a successful Present. */
 HRESULT present_frame(const void *pixels, int pitch);
 
+/* The device and context, so other modules can render into the same swapchain
+ * rather than standing up a second device. Both are NULL before present_init.
+ * Declared as void* to keep this header free of the D3D11 headers. */
+void    present_get_device(void **device, void **context);
+
+/* Hand the presenter a finished RGBA image to show instead of the game's
+ * palettised framebuffer. Pass NULL to go back to the normal 8bpp path. */
+void    present_set_external(void *srv, int width, int height);
+
 /* Query the current backbuffer/client size (for clipper + cursor mapping). */
 void    present_get_client_size(int *w, int *h);
 

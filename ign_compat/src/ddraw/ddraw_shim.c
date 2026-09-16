@@ -38,6 +38,7 @@
 #include <stdint.h>
 #include <mmsystem.h>
 #include "../common/iathook.h"
+#include "../common/gametrace.h"
 #include "../common/ignlog.h"
 #include "../common/d3d11_present.h"
 
@@ -121,6 +122,11 @@ static int             g_present_fmt = -1;   /* -1 = auto (P8) */
 static int             g_block_joy = 1;
 static int             g_block_mci = 1;
 static int             g_cpu_fix   = 1;
+static int             g_reacquire = 1;
+static HWND            g_game_hwnd;
+static int             g_trace_steps = 0;    /* 0 = no simulation recording */
+static int             g_trace_car_bytes = 0x400;
+static int             g_trace_frames = 0;    /* 0 = no primitive recording */
 static int             g_dump_frame = 0;
 
 /* Settings come from ign_compat.ini beside the executable, so a user who
@@ -195,6 +201,10 @@ static void load_config(void)
     g_block_joy  = cfg_int("BLOCK_JOYSTICK", 1);
     g_block_mci  = cfg_int("BLOCK_MCI", 1);
     g_cpu_fix    = cfg_int("CPU_FIX", 1);
+    g_reacquire  = cfg_int("INPUT_REACQUIRE", 1);
+    g_trace_steps = cfg_int("TRACE_SIM_STEPS", 0);
+    g_trace_car_bytes = cfg_int("TRACE_CAR_BYTES", 0x400);
+    g_trace_frames = cfg_int("TRACE_PRIM_FRAMES", 0);
     if (g_win_scale < 1) g_win_scale = 1;
 }
 
@@ -961,6 +971,7 @@ static HRESULT WINAPI DD_SetCooperativeLevel(IDirectDraw *me, HWND hwnd, DWORD f
     DDImpl *dd = (DDImpl *)me;
     dd->hwnd = hwnd;
     dd->coop = flags;
+    g_game_hwnd = hwnd;
     IGNLOG("SetCooperativeLevel hwnd=%p flags=0x%lX%s", (void *)hwnd,
            (unsigned long)flags, (flags & DDSCL_EXCLUSIVE) ? " (exclusive->borderless)" : "");
     return ensure_present(dd) == S_OK ? DD_OK : DD_OK;
@@ -1043,6 +1054,14 @@ HRESULT WINAPI DllCanUnloadNow(void)  { return S_FALSE; }
 HRESULT WINAPI DllGetClassObject(REFCLSID c, REFIID i, void **o)
 { (void)c; (void)i; if (o) *o = NULL; return CLASS_E_CLASSNOTAVAILABLE; }
 
+/* The palette currently on screen, for the trace harness: the game fades by
+ * reloading the palette, so a captured framebuffer is meaningless without the
+ * palette that was in force when it was drawn. */
+const unsigned int *ign_current_palette(void)
+{
+    return g_active_pal ? g_active_pal->bgrx : NULL;
+}
+
 /* ====================================================== IAT hooks ======= */
 
 /* The game AVs inside winmmbase.dll as it enters a race.  It only touches two
@@ -1074,6 +1093,51 @@ static MCIERROR WINAPI hook_mciSendStringA(LPCSTR cmd, LPSTR ret, UINT cch, HWND
     return MCIERR_DEVICE_NOT_INSTALLED;
 }
 
+/* Alt-Tab kills this game's keyboard permanently.
+ *
+ * It acquires the DirectInput keyboard with DISCL_FOREGROUND, so Windows
+ * unacquires it whenever the window loses focus. On regaining focus the device
+ * stays unacquired until someone calls Acquire again - and this game only
+ * re-acquires when GetDeviceData returns DIERR_INPUTLOST, silently ignoring
+ * DIERR_NOTACQUIRED, which is what it actually gets. So after one Alt-Tab no
+ * key ever reaches the game again.
+ *
+ * The device interface pointer lives at a fixed address, so we can simply call
+ * Acquire on it ourselves. Acquire on an already-acquired device returns
+ * S_FALSE and does nothing, so this is safe to repeat. */
+#define DINPUT_DEVICE_PTR 0x0050E26Cu
+#define DIDEV_ACQUIRE_SLOT 7           /* IDirectInputDevice::Acquire, vtable +0x1C */
+
+static int readable_at(const void *p, unsigned n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!p || !VirtualQuery(p, &mbi, sizeof mbi)) return 0;
+    if (mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return 0;
+    return (UINT_PTR)mbi.BaseAddress + mbi.RegionSize >= (UINT_PTR)p + n;
+}
+
+static void input_keepalive(void)
+{
+    typedef HRESULT (WINAPI *acquire_fn)(void *self);
+    static DWORD last;
+    DWORD now;
+    void *dev;
+    void **vtbl;
+
+    if (!g_reacquire || !g_game_hwnd) return;
+    if (GetForegroundWindow() != g_game_hwnd) return;
+    now = GetTickCount();
+    if (now - last < 250) return;      /* a few times a second is plenty */
+    last = now;
+
+    if (!readable_at((const void *)(UINT_PTR)DINPUT_DEVICE_PTR, sizeof(void *))) return;
+    dev = *(void **)(UINT_PTR)DINPUT_DEVICE_PTR;
+    if (!readable_at(dev, sizeof(void *))) return;
+    vtbl = *(void ***)dev;
+    if (!readable_at(vtbl, (DIDEV_ACQUIRE_SLOT + 1) * sizeof(void *))) return;
+    ((acquire_fn)vtbl[DIDEV_ACQUIRE_SLOT])(dev);
+}
+
 /* The main loop spins ~10^5 iterations/sec waiting out its own 36 FPS gate and
  * never calls Sleep (it does not even import it), so it pins a core.  Yielding
  * when there is no message costs nothing and caps the spin. */
@@ -1081,6 +1145,7 @@ static BOOL (WINAPI *real_PeekMessageA)(LPMSG, HWND, UINT, UINT, UINT);
 static BOOL WINAPI hook_PeekMessageA(LPMSG m, HWND h, UINT f1, UINT f2, UINT rm)
 {
     BOOL got = real_PeekMessageA ? real_PeekMessageA(m, h, f1, f2, rm) : FALSE;
+    input_keepalive();
     if (!got) Sleep(1);
     return got;
 }
@@ -1106,6 +1171,10 @@ static void install_hooks(void)
         IGNLOG("hook PeekMessageA (CPU fix): %s", ok ? "ok" : "NOT FOUND");
         timeBeginPeriod(1);
     }
+    if (g_trace_steps > 0)
+        gametrace_install(g_trace_steps, g_trace_car_bytes);
+    if (g_trace_frames > 0)
+        gametrace_install_prims(g_trace_frames);
 }
 
 BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
@@ -1122,12 +1191,13 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
                g_windowed, g_win_scale, (int)g_scaling,
                g_filter == 0 ? "point" : g_filter == 1 ? "linear" : "sharp",
                g_vsync, trace_on());
-        IGNLOG("  fixes: block_joy=%d block_mci=%d cpu_fix=%d",
-               g_block_joy, g_block_mci, g_cpu_fix);
+        IGNLOG("  fixes: block_joy=%d block_mci=%d cpu_fix=%d reacquire=%d",
+               g_block_joy, g_block_mci, g_cpu_fix, g_reacquire);
         /* Hooks are installed from DirectDrawCreate, not here: DllMain runs
          * under the loader lock, and both patching the IAT and calling into
          * winmm from it can deadlock process startup. */
     } else if (reason == DLL_PROCESS_DETACH) {
+        gametrace_close();
         if (g_cpu_fix) timeEndPeriod(1);
         present_shutdown();
     }

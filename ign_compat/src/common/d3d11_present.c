@@ -380,6 +380,12 @@ void present_set_palette(const uint32_t *bgrx256)
     G.palette_dirty = 1;
 }
 
+void present_get_device(void **device, void **context)
+{
+    if (device)  *device  = G.dev;
+    if (context) *context = G.ctx;
+}
+
 void present_get_client_size(int *w, int *h)
 {
     if (w) *w = G.client_w;

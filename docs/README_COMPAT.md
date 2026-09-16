@@ -25,6 +25,7 @@ PIXEL_FORMAT=auto ; auto | p8 | rgb565 | xrgb888   (auto is correct)
 BLOCK_JOYSTICK=1  ; required: the legacy joystick API crashes winmmbase
 BLOCK_MCI=1       ; disables CD redbook music (optional anyway)
 CPU_FIX=1         ; stops the main loop pinning a core
+INPUT_REACQUIRE=1 ; re-acquires the keyboard after Alt-Tab (see below)
 TRACE=0           ; 1 = log every DirectDraw call (slow)
 ```
 
@@ -42,6 +43,7 @@ pixel widths a non-integer upscale produces (640→1440 is 2.25×).
 | Crash entering a race | `joyGetDevCapsA`/`joyGetPosEx` AV in `winmmbase.dll` | IAT-hooked to report no joystick |
 | 100% CPU on one core | main loop spins; `Sleep` is never imported | `PeekMessageA` hook yields when idle |
 | Window stuck at 640×480 | Windows `640X480` compatibility shim | removed (see below) |
+| Keyboard dead after Alt-Tab | DirectInput unacquires on focus loss, and the game only re-acquires on one error code it never receives | the shim re-acquires the device when the window regains focus |
 
 ## Windows compatibility shims
 
